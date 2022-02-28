@@ -1,0 +1,117 @@
+- name: GitLab to Debian
+  hosts: all
+  become: yes
+  become_method: sudo
+  vars:
+    source_key: ./{{ domain }}.key
+    source_crt: ./{{ domain }}.crt
+    dest_crt: /etc/gitlab/ssl/{{ domain }}.crt
+    dest_key: /etc/gitlab/ssl/{{ domain }}.key
+  tasks:
+
+  - name: Install dependency
+    apt:
+      name:
+        - apt-transport-https
+        - ca-certificates
+        - curl
+        - gnupg
+        - lsb-release
+        - debian-archive-keyring
+        - openssh-server
+        - ca-certificates
+        - tzdata
+        - perl
+      state: present
+      update_cache: yes
+
+  - name: Set postfix mailname
+    debconf:
+      name: mailname
+      question: postfix postfix/mailname
+      value: "{{ domain }}"
+      vtype: string
+
+  - name: Set postfix main_mailer_type
+    debconf:
+      name: main_mailer_type
+      question: postfix postfix/main_mailer_type
+      value: 'Internet Site'
+      vtype: string
+
+  - name: Install postfix
+    apt:
+      name:
+        - postfix
+      state: present
+      update_cache: yes
+
+  - name: Add GPG key
+    apt_key:
+      url: https://packages.gitlab.com/gitlab/gitlab-ce/gpgkey
+      state: present
+
+  - name: Add repository to apt
+    apt_repository:
+      repo: deb https://packages.gitlab.com/gitlab/gitlab-ce/debian/ {{ ansible_distribution_release }} main
+      state: present
+
+  - name: Add src repository to apt
+    apt_repository:
+      repo: deb-src https://packages.gitlab.com/gitlab/gitlab-ce/debian/ {{ ansible_distribution_release }} main
+      state: present
+
+  - name: Install GitLab
+    apt:
+      name:
+        - gitlab-ce
+      state: present
+      update_cache: yes
+
+  - name: Add external URL
+    lineinfile:
+      path: /etc/gitlab/gitlab.rb
+      regexp: '^external_url'
+      insertafter: '^# external_url'
+      line: external_url 'https://{{ domain }}'
+
+  - name: Disable Let's Encrypt integration
+    lineinfile:
+      path: /etc/gitlab/gitlab.rb
+      regexp: '^letsencrypt'
+      insertafter: '^# letsencrypt'
+      line: "letsencrypt['enable'] = false"
+
+  - name: Add regestry
+    lineinfile:
+      path: /etc/gitlab/gitlab.rb
+      regexp: '^registry_external_url'
+      insertafter: '^# registry_external_url'
+      line: registry_external_url 'https://{{ domain }}:5050'
+
+  - name: Create an SSL directory
+    file:
+      dest: /etc/gitlab/ssl
+      mode: 0755
+      owner: root
+      group: root
+      state: directory
+
+  - name: Add SSL certificate
+    copy:
+      src: "{{ source_crt }}"
+      dest: "{{ dest_crt }}"
+      owner: root
+      group: root
+      mode: 0644
+
+  - name: Add private key
+    copy:
+      src: "{{ source_key }}"
+      dest: "{{ dest_key }}"
+      owner: root
+      group: root
+      mode: 0600
+
+  - name: Gitlab Reconfigure
+    command: gitlab-ctl reconfigure
